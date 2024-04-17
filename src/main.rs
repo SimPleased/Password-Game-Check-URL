@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::io::prelude::*;
 use std::error::Error;
 use std::path::Path;
-use regex::Regex;
 use std::fs::File;
+use regex::Regex;
 use std::env;
 
 async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
@@ -36,12 +36,13 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
     let mut roman_numeral_values: Vec<(String, u16)> = Vec::new();
     let mut last_roman: bool = false;
     let mut next_char = None;
+    let mut total: u8 = 0;
 
     for (i, c) in video_id.chars().enumerate() {
         match roman_numerals.get(&c)  {
             Some(n) => {
                 if *n > 35 {
-                    return Err("Roman numerals exceeded limits.".into());
+                    return Err("The URL broke rule 9, total roman numerals exceeded 35.".into());
                 }
                 if last_roman {
                     if roman_numerals.get(&roman_numeral_values
@@ -65,13 +66,21 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
             }
         }
 
+        match c.to_digit(10) {
+            Some(n) => total += n as u8,
+            None => {}
+        }
+
         next_char = video_id.chars().nth(i+1);
         let mut element = String::from(c);
 
         if next_char != None {
             element.push(next_char.unwrap());
             match periodic_elements.get(element.as_str()) {
-                Some(e) => attomic_total += *e as u16,
+                Some(e) => {
+                    element.clear();
+                    attomic_total += *e as u16;
+                },
                 None => {element.pop();}
             }
         }
@@ -80,6 +89,10 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
             Some(e) => attomic_total += *e as u16,
             None => {}
         }
+    }
+
+    if total > 25 {
+        return Err("The URL broke rule 5, total number exceeded 25.".into());
     }
     
     let mut roman_numerals_total: u32 = 1;
@@ -101,11 +114,11 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
                 attomic_total += 23
             }
         }
-        _ => return Err("Roman numerals exceeded limits.".into())
+        _ => return Err("The URL broke rule 9, total roman numerals exceeded 35.".into())
     }
 
     if attomic_total > 200 {
-        return Err("Accumulated attomic number exceeded limits.".into());
+        return Err("The URL broke rule 18, total attomic exceeded 200.".into());
     }
 
     return Ok((xxxv, attomic_total as u8));
@@ -132,8 +145,8 @@ async fn run() -> Option<Vec<String>> {
         Err(err) => panic!("Couldn't read {}: {}", display, err)
     }
 
-    let rgx = Regex::new(r"https://|www\.youtube\.com|youtu\.be|watch\?v=|/|\n").unwrap();
-    s = rgx.replace_all(s.as_str(), "").into();
+    s = Regex::new(r"https://|www\.youtube\.com|youtu\.be|watch\?v=|/|\n| ").unwrap()
+    .replace_all(s.as_str(), "").into();
 
     let ids: Vec<&str> = s.split(',').collect();
 
@@ -150,7 +163,7 @@ async fn run() -> Option<Vec<String>> {
             match validate_id(id.clone()).await {
                 Ok(data) => {
                     let mut good_ids = good_ids.lock().unwrap();
-                    good_ids.push(format!("youtu.be/{}", id));
+                    good_ids.push(format!("youtu.be/{} (a = {}){}", id, data.1, if data.0 { " using XXXV" } else { "" }));
                     println!("{}: Succeeded with the attomic number ({}) with the format {}.", id, data.1, if data.0 { "XXXV" } else { "V VII" })
                 }, Err(err) => println!("{}: {}", id, err)
             }
