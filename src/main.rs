@@ -1,9 +1,11 @@
-use std::error::Error;
-use std::env;
+use clipboard::{ClipboardProvider, ClipboardContext};
 use std::collections::HashMap;
-use std::fs::File;
+use std::sync::{Arc, Mutex};
 use std::io::prelude::*;
+use std::error::Error;
 use std::path::Path;
+use std::fs::File;
+use std::env;
 
 async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
     if video_id.len() != 11 {return Err("Video ID was not the right length.".into())}
@@ -41,10 +43,17 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
                     return Err("Roman numerals exceeded limits.".into());
                 }
                 if last_roman {
-                    let last_index = roman_numeral_values.len() - 1;
-                    let (ref mut last_numeral, ref mut last_value) = &mut roman_numeral_values[last_index];
-                    *last_numeral = format!("{}{}", last_numeral, c);
-                    *last_value += n;
+                    if roman_numerals.get(&roman_numeral_values
+                        .last().unwrap().0
+                        .chars()
+                        .last().unwrap()
+                    ).unwrap() < n {
+                        roman_numeral_values.push((c.to_string(), *n));
+                    }
+                    else {
+                        roman_numeral_values.last_mut().unwrap().0.push(c);
+                        roman_numeral_values.last_mut().unwrap().1 += n;
+                    }
                 } else {
                     roman_numeral_values.push((c.to_string(), *n));
                 }
@@ -72,15 +81,13 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
         }
     }
     
-    let mut roman_numerals_total_value: u32 = 1;
+    let mut roman_numerals_total: u32 = 1;
 
     for i in 0..roman_numeral_values.len() {
-        roman_numerals_total_value *= roman_numeral_values[i].1 as u32;
+        roman_numerals_total *= roman_numeral_values[i].1 as u32;
     }
 
-    println!("{}", attomic_total);
-
-    match roman_numerals_total_value {
+    match roman_numerals_total {
         35 => {},
         7 => attomic_total += 23,
         5 => attomic_total += 129,
@@ -96,18 +103,18 @@ async fn validate_id(video_id: String) -> Result<(bool, u8), Box<dyn Error>> {
         _ => return Err("Roman numerals exceeded limits.".into())
     }
 
-    if attomic_total <= 200 {
+    if attomic_total > 200 {
         return Err("Accumulated attomic number exceeded limits.".into());
     }
 
     return Ok((xxxv, attomic_total as u8));
 }
 
-async fn run() {
+async fn run() -> Option<Vec<String>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("Please provide a file as an argument.");
-        return;
+        return None;
     }
 
     let path = Path::new(&args[1]);
@@ -126,17 +133,25 @@ async fn run() {
 
     let ids: Vec<&str> = s.split(',').collect();
 
+    let good_ids = Arc::new(Mutex::new(Vec::new()));
     let mut handles = Vec::new();
 
     for id in ids.iter() {
         let id = id
             .replace("https://", "")
             .replace("youtube.com/watchv?=", "")
-            .replace("youtu.be", "");
+            .replace("youtu.be/", "")
+            .replace('/', "");
+
+        let good_ids = Arc::clone(&good_ids);
+
         let handle = tokio::spawn(async move {
             match validate_id(id.clone()).await {
-                Ok(data) => println!("Video ID({}) succeeded with the attomic number ({}) with the format {}.", id, data.1, if data.0 { "XXXV" } else { "V VII" }),
-                Err(err) => println!("Video ID({}) failed with the error:\n{}", id, err)
+                Ok(data) => {
+                    let mut good_ids = good_ids.lock().unwrap();
+                    good_ids.push(format!("youtu.be/{}", id));
+                    println!("{}: Succeeded with the attomic number ({}) with the format {}.", id, data.1, if data.0 { "XXXV" } else { "V VII" })
+                }, Err(err) => println!("{}: {}", id, err)
             }
         });
         handles.push(handle);
@@ -145,12 +160,32 @@ async fn run() {
     for handle in handles {
         handle.await;
     }
+
+    Some(Arc::try_unwrap(good_ids).unwrap().into_inner().unwrap())
 }
 
 #[tokio::main]
 async fn main() {
-    run().await;
+    match run().await {
+        Some(good_ids) => {
+            if !good_ids.is_empty() {
+                println!("\nFound {} valid URLs.\nDo you want to copy all urls. (y)/(n)", good_ids.len());
 
-    println!("Program has finished.\nPress ENTER to close.");
+                let mut buf = String::new();
+                std::io::stdin().read_line(&mut buf).unwrap();
+
+                match buf.chars().next() {
+                    Some('Y') | Some('y') => {},
+                    Some(_) | None => return
+                }
+
+                let mut clipboard: ClipboardContext = ClipboardProvider::new().unwrap();
+                clipboard.set_contents(good_ids.as_slice().join("\n")).unwrap();
+                return;
+            }
+        }, None => {}
+    }
+
+    println!("\nProgram has finished without finding any valid URLs.\nPress ENTER to exit.");
     std::io::stdin().read_line(&mut String::new()).unwrap();
 }
