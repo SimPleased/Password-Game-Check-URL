@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::io::prelude::*;
 use std::error::Error;
 use std::path::Path;
+use regex::Regex;
 use std::fs::File;
 use std::env;
 
@@ -127,9 +128,12 @@ async fn run() -> Option<Vec<String>> {
 
     let mut s = String::new();
     match file.read_to_string(&mut s) {
-        Ok(_) => {},
+        Ok(s) => {},
         Err(err) => panic!("Couldn't read {}: {}", display, err)
     }
+
+    let rgx = Regex::new(r"https://|www\.youtube\.com|youtu\.be|watch\?v=|/|\n").unwrap();
+    s = rgx.replace_all(s.as_str(), "").into();
 
     let ids: Vec<&str> = s.split(',').collect();
 
@@ -137,11 +141,8 @@ async fn run() -> Option<Vec<String>> {
     let mut handles = Vec::new();
 
     for id in ids.iter() {
-        let id = id
-            .replace("https://", "")
-            .replace("youtube.com/watchv?=", "")
-            .replace("youtu.be/", "")
-            .replace('/', "");
+        let id = id.to_string();
+            
 
         let good_ids = Arc::clone(&good_ids);
 
