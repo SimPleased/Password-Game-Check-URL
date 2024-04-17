@@ -1,4 +1,4 @@
-This is a tool for checking if a URLs format wont break rule 9 or rule 18.
+This is a tool for checking if a URLs format wont break rules: 5, 9 and 18.
 
 How to use:
 
